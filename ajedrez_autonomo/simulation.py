@@ -3,8 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .chess_core import Board
+from .chess_core import Board, Move
 from .engine import ParallelSearchEngine
+
+
+@dataclass(slots=True)
+class OpponentLine:
+    opponent_move: Move
+    opponent_score: float
+    our_response: Optional[Move]
+    response_score: float
+
+
+@dataclass(slots=True)
+class StrategyPlan:
+    recommended_move: Move
+    projected_score: float
+    responses: List[OpponentLine]
 
 
 @dataclass(slots=True)
@@ -32,6 +47,45 @@ class MultiBoardSimulation:
                 board.apply_move(candidate.best_move)
             scenarios.append(Scenario(name=f"Escenario {idx}", board=board, score=candidate.score))
         return scenarios
+
+    def build_strategy_playbook(self, fen: Optional[str] = None, response_count: int = 3) -> List[StrategyPlan]:
+        base = Board.from_fen(fen) if fen else Board()
+        first_moves = self.engine.top_candidate_moves(base, count=self.branches)
+        plans: List[StrategyPlan] = []
+
+        for candidate in first_moves:
+            if not candidate.best_move:
+                continue
+            board_after_our_move = base.copy()
+            board_after_our_move.apply_move(candidate.best_move)
+
+            opponent_options = self.engine.top_candidate_moves(board_after_our_move, count=response_count)
+            lines: List[OpponentLine] = []
+
+            for option in opponent_options:
+                if not option.best_move:
+                    continue
+                board_after_opponent = board_after_our_move.copy()
+                board_after_opponent.apply_move(option.best_move)
+
+                best_response = self.engine.best_move(board_after_opponent)
+                lines.append(
+                    OpponentLine(
+                        opponent_move=option.best_move,
+                        opponent_score=option.score,
+                        our_response=best_response.best_move,
+                        response_score=best_response.score,
+                    )
+                )
+
+            plans.append(
+                StrategyPlan(
+                    recommended_move=candidate.best_move,
+                    projected_score=candidate.score,
+                    responses=lines,
+                )
+            )
+        return plans
 
     def advance(self, scenarios: List[Scenario]) -> None:
         for scenario in scenarios:
